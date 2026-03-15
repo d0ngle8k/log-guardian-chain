@@ -4,7 +4,7 @@ import { Search, Filter, ChevronLeft, ChevronRight, ExternalLink, Eye } from 'lu
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { VerificationModal } from '@/components/logs/VerificationModal';
+import { VerificationModal } from '@/components/logs/VerificationModal.tsx';
 import { mockLogs } from '@/lib/mockData';
 import { truncateHash, formatFileSize, formatTimestamp } from '@/lib/hashUtils';
 import { LogEntry } from '@/lib/types';
