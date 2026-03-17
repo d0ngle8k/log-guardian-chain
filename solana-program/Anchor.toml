@@ -1,0 +1,18 @@
+[toolchain]
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.devnet]
+log_evidence_anchor = "6enXBVJChBad8Bs7yYjZkwzxGvVtTW7hNok3YLep5tF3"
+
+[registry]
+url = "https://api.apr.dev"
+
+[provider]
+cluster = "devnet"
+wallet = "~/.config/solana/log-guardian-devnet.json"
+
+[scripts]
+test = "echo \"Use anchor test when local validator is configured\""

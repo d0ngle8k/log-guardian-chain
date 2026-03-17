@@ -1,0 +1,11 @@
+C:\Users\Thanh\Desktop\log-guardian-chain\agent-syslog-collector\target\release\deps\ipnet-27d2857034051f9c.d: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\ipext.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\ipnet.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\mask.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\parser.rs
+
+C:\Users\Thanh\Desktop\log-guardian-chain\agent-syslog-collector\target\release\deps\libipnet-27d2857034051f9c.rlib: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\ipext.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\ipnet.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\mask.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\parser.rs
+
+C:\Users\Thanh\Desktop\log-guardian-chain\agent-syslog-collector\target\release\deps\libipnet-27d2857034051f9c.rmeta: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\ipext.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\ipnet.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\mask.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\parser.rs
+
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\lib.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\ipext.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\ipnet.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\mask.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\ipnet-2.12.0\src\parser.rs:

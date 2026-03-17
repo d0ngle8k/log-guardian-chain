@@ -1,0 +1,14 @@
+\\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\target\release\deps\serde-07f61a22d7069f16.d: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs \\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\target\release\build\serde-c46b1832293f2231\out\private.rs
+
+\\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\target\release\deps\libserde-07f61a22d7069f16.rlib: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs \\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\target\release\build\serde-c46b1832293f2231\out\private.rs
+
+\\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\target\release\deps\libserde-07f61a22d7069f16.rmeta: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs \\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\target\release\build\serde-c46b1832293f2231\out\private.rs
+
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs:
+\\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\target\release\build\serde-c46b1832293f2231\out\private.rs:
+
+# env-dep:OUT_DIR=\\\\?\\C:\\Users\\Thanh\\Desktop\\log-guardian-chain\\solana-program\\target\\release\\build\\serde-c46b1832293f2231\\out

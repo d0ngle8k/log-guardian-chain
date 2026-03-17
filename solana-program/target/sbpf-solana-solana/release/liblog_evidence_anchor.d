@@ -1,0 +1,1 @@
+\\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\target\sbpf-solana-solana\release\liblog_evidence_anchor.rlib: \\?\C:\Users\Thanh\Desktop\log-guardian-chain\solana-program\programs\log-evidence-anchor\src\lib.rs

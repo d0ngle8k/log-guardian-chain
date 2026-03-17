@@ -1,0 +1,14 @@
+C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\release\deps\thiserror-ca006e98982bc568.d: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\aserror.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\display.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\var.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\private.rs C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\release\build\thiserror-481ae947cf0908fc\out/private.rs
+
+C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\release\deps\libthiserror-ca006e98982bc568.rlib: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\aserror.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\display.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\var.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\private.rs C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\release\build\thiserror-481ae947cf0908fc\out/private.rs
+
+C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\release\deps\libthiserror-ca006e98982bc568.rmeta: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\aserror.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\display.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\var.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\private.rs C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\release\build\thiserror-481ae947cf0908fc\out/private.rs
+
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\lib.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\aserror.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\display.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\var.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.18\src\private.rs:
+C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\release\build\thiserror-481ae947cf0908fc\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\Thanh\\Desktop\\log-guardian-chain\\backend\\target\\release\\build\\thiserror-481ae947cf0908fc\\out

@@ -22,3 +22,12 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Runtime and local artifacts
+spool/
+tmp-*.txt
+sample-smoke.log
+backend/run_out.txt
+backend/run_err.txt
+frontend/test-results/
+solana-program/anchor-build.exit

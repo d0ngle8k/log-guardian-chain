@@ -1,0 +1,10 @@
+C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\debug\deps\serde_bytes-3df42bdf94b01b18.d: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytearray.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytes.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\de.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\ser.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytebuf.rs
+
+C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\debug\deps\libserde_bytes-3df42bdf94b01b18.rmeta: C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\lib.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytearray.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytes.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\de.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\ser.rs C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytebuf.rs
+
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\lib.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytearray.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytes.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\de.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\ser.rs:
+C:\Users\Thanh\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde_bytes-0.11.19\src\bytebuf.rs:

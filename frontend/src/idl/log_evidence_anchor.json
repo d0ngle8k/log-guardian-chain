@@ -1,0 +1,162 @@
+{
+  "address": "6enXBVJChBad8Bs7yYjZkwzxGvVtTW7hNok3YLep5tF3",
+  "metadata": {
+    "name": "log_evidence_anchor",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "store_log_evidence",
+      "discriminator": [
+        46,
+        135,
+        63,
+        103,
+        22,
+        109,
+        55,
+        7
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "log_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  103,
+                  95,
+                  114,
+                  101,
+                  99,
+                  111,
+                  114,
+                  100
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "device_id"
+              },
+              {
+                "kind": "arg",
+                "path": "timestamp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "device_id",
+          "type": "string"
+        },
+        {
+          "name": "timestamp",
+          "type": "i64"
+        },
+        {
+          "name": "sha256_hex",
+          "type": "string"
+        },
+        {
+          "name": "ipfs_cid",
+          "type": "string"
+        },
+        {
+          "name": "tx_ref",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "LogRecord",
+      "discriminator": [
+        48,
+        87,
+        176,
+        202,
+        109,
+        11,
+        253,
+        128
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "DeviceIdTooLong",
+      "msg": "device_id exceeds 64 bytes"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidHashLength",
+      "msg": "sha256 must be 64 hex chars"
+    },
+    {
+      "code": 6002,
+      "name": "CidTooLong",
+      "msg": "ipfs cid exceeds 96 bytes"
+    },
+    {
+      "code": 6003,
+      "name": "TxRefTooLong",
+      "msg": "tx_ref exceeds 128 bytes"
+    }
+  ],
+  "types": [
+    {
+      "name": "LogRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "device_id",
+            "type": "string"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          },
+          {
+            "name": "sha256_hex",
+            "type": "string"
+          },
+          {
+            "name": "ipfs_cid",
+            "type": "string"
+          },
+          {
+            "name": "tx_ref",
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

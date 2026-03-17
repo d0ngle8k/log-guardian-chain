@@ -1,0 +1,14 @@
+services:
+  fluentd:
+    image: fluent/fluentd:v1.17-1
+    container_name: log-guardian-fluentd
+    environment:
+      - INGEST_API_KEY=${INGEST_API_KEY}
+    volumes:
+      - ./fluent.conf:/fluentd/etc/fluent.conf:ro
+      - ../backend/run_out.txt:/fluentd/log/backend.log:ro
+      - fluentd-buffer:/fluentd/log/buffer
+    command: ["fluentd", "-c", "/fluentd/etc/fluent.conf", "-v"]
+
+volumes:
+  fluentd-buffer:

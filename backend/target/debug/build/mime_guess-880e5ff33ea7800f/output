@@ -1,0 +1,1 @@
+cargo:rustc-env=MIME_TYPES_GENERATED_PATH=C:\Users\Thanh\Desktop\log-guardian-chain\backend\target\debug\build\mime_guess-880e5ff33ea7800f\out\mime_types_generated.rs

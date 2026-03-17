@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Guardian Log blockchain icon">
+  <defs>
+    <linearGradient id="g" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#22c55e"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="14" fill="#0b1220"/>
+  <path d="M23 18h18l9 14-9 14H23l-9-14 9-14zm3.2 5.5L20.8 32l5.4 8.5h11.6l5.4-8.5-5.4-8.5H26.2z" fill="url(#g)"/>
+  <circle cx="32" cy="32" r="4" fill="#34d399"/>
+</svg>

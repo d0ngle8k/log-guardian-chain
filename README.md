@@ -1,73 +1,33 @@
-# Welcome to your Lovable project
+# Guardian Log
 
-## Project info
+Guardian Log is a blockchain-backed log integrity platform with three runtime parts:
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+- `frontend/`: React dashboard and operations UI
+- `backend/`: Rust API, ingest, IPFS, and Solana verification flow
+- `agent-syslog-collector/`: production syslog collector binary and tests
 
-## How can I edit this code?
+## Start The Stack
 
-There are several ways of editing your application.
+Use the root startup script:
 
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```powershell
+./start-guardian-log.ps1
 ```
 
-**Edit a file directly in GitHub**
+To also generate test syslog traffic every minute:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```powershell
+./start-guardian-log.ps1 -StartSender
+```
 
-**Use GitHub Codespaces**
+## Repo Layout
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+- `frontend/` contains the only production frontend application
+- `backend/` contains the API, DB logic, IPFS upload, and Solana Devnet verification
+- `solana-program/` contains the on-chain program and IDL assets
+- `docs/` contains operational and contract documentation
 
-## What technologies are used for this project?
+## Notes
 
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+- The syslog collector currently runs from the checked-in binary under `agent-syslog-collector/target/` because the full collector source tree is not present in this workspace snapshot.
+- Documentation files and context prompt files are intentionally preserved during cleanup.
