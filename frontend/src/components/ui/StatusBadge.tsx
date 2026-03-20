@@ -9,8 +9,23 @@ const statusConfig: Record<VerificationStatus, { icon: typeof ShieldCheck; label
   unverified: { icon: ShieldQuestion, label: 'Unverified', className: 'bg-muted text-muted-foreground border-border' },
 };
 
-export function StatusBadge({ status }: { status: VerificationStatus }) {
-  const config = statusConfig[status];
+function normalizeStatus(status: string): VerificationStatus {
+  const value = status.trim().toLowerCase();
+  if (value === 'verified' || value === 'tampered' || value === 'pending' || value === 'unverified') {
+    return value;
+  }
+  if (value.startsWith('pending')) {
+    return 'pending';
+  }
+  if (value === 'confirmed') {
+    return 'verified';
+  }
+  return 'pending';
+}
+
+export function StatusBadge({ status }: { status: VerificationStatus | string }) {
+  const normalized = normalizeStatus(String(status ?? ''));
+  const config = statusConfig[normalized];
   const Icon = config.icon;
   return (
     <span className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border", config.className)}>

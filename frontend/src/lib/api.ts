@@ -13,6 +13,28 @@ interface LogsListResponse {
   page_size: number;
 }
 
+function normalizeVerificationStatus(rawStatus: unknown): LogEntry['status'] {
+  const value = String(rawStatus ?? '').trim().toLowerCase();
+
+  if (!value) {
+    return 'pending';
+  }
+
+  if (value === 'verified' || value === 'tampered' || value === 'pending' || value === 'unverified') {
+    return value;
+  }
+
+  // Backend uses extended pending/confirmation states.
+  if (value.startsWith('pending')) {
+    return 'pending';
+  }
+  if (value === 'confirmed') {
+    return 'verified';
+  }
+
+  return 'pending';
+}
+
 interface VerifyResponse {
   logId: string;
   expectedHash: string;
@@ -56,8 +78,47 @@ export interface WalletRoleRecord {
   granted_at: number;
 }
 
+export interface AdminRetryJob {
+  id: number;
+  logId: string;
+  retryCount: number;
+  maxAttempts: number;
+  reason: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'abandoned';
+  nextAttemptAt: number;
+  lastAttemptedAt?: number | null;
+  createdAt: number;
+}
+
+export interface AdminKpis {
+  ingestFailureRate: number;
+  retryBacklog: number;
+  retryFailed: number;
+  auditCoveragePct: number;
+  mttrSeconds: number;
+}
+
+export interface AdminAuditLog {
+  id: number;
+  eventType: string;
+  logId?: string | null;
+  deviceId?: string | null;
+  relatedData: unknown;
+  actorWallet?: string | null;
+  actorRole?: string | null;
+  createdAt: number;
+}
+
 interface SupportChatResponse {
   answer: string;
+}
+
+interface AdminRetryJobsResponse {
+  items: AdminRetryJob[];
+}
+
+interface AdminAuditLogResponse {
+  items: AdminAuditLog[];
 }
 
 interface ReportLogResponse {
@@ -196,11 +257,26 @@ export async function fetchLogs(params: {
   }
 
   const payload = await request<LogsListResponse>(`/api/v1/logs?${query.toString()}`);
+  
+  // Transform snake_case to camelCase with proper fallbacks
+  const transformedItems = payload.items.map((item: any) => ({
+    id: item.id || item.log_id || 'unknown',
+    deviceId: item.device_id || item.deviceId || 'unknown',
+    timestamp: Math.floor(item.timestamp_ms || item.timestamp || Date.now()),
+    ipfsCid: item.ipfs_cid || item.ipfsCid || '',
+    hashOnChain: item.hash_on_chain || item.hash || item.hashOnChain || '',
+    format: item.format || 'json',
+    fileSize: parseInt(String(item.file_size || item.fileSize || 0), 10),
+    status: normalizeVerificationStatus(item.status || item.verification_status),
+    txSignature: item.tx_signature || item.txSignature || '',
+    pdaAddress: item.pda_address || item.pdaAddress || '',
+  }));
+  
   return {
-    items: payload.items,
-    total: payload.total,
-    page: payload.page,
-    pageSize: payload.page_size,
+    items: transformedItems,
+    total: payload.total || 0,
+    page: payload.page || 1,
+    pageSize: payload.page_size || 50,
   };
 }
 
@@ -227,6 +303,54 @@ export async function revokeWalletRole(walletAddress: string): Promise<void> {
     method: 'DELETE',
     body: JSON.stringify({}),
   });
+}
+
+export async function fetchAdminRetryJobs(params?: {
+  status?: 'pending' | 'running' | 'completed' | 'failed' | 'abandoned';
+}): Promise<AdminRetryJob[]> {
+  const query = new URLSearchParams();
+  if (params?.status) {
+    query.set('status', params.status);
+  }
+  const suffix = query.toString();
+  const payload = await request<AdminRetryJobsResponse>(
+    `/api/v1/admin/retry-jobs${suffix ? `?${suffix}` : ''}`,
+  );
+  return payload.items;
+}
+
+export async function retryAdminJobNow(jobId: number): Promise<void> {
+  await request<{ status: string }>(`/api/v1/admin/retry-jobs/${jobId}/retry`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function fetchAdminKpis(): Promise<AdminKpis> {
+  return request<AdminKpis>('/api/v1/admin/kpis');
+}
+
+export async function fetchAdminAuditLog(params?: {
+  limit?: number;
+  eventType?: string;
+  logId?: string;
+}): Promise<AdminAuditLog[]> {
+  const query = new URLSearchParams();
+  if (params?.limit) {
+    query.set('limit', String(params.limit));
+  }
+  if (params?.eventType) {
+    query.set('event_type', params.eventType);
+  }
+  if (params?.logId) {
+    query.set('log_id', params.logId);
+  }
+
+  const suffix = query.toString();
+  const payload = await request<AdminAuditLogResponse>(
+    `/api/v1/admin/audit-log${suffix ? `?${suffix}` : ''}`,
+  );
+  return payload.items;
 }
 
 export async function fetchDashboardStats(): Promise<DashboardStats> {

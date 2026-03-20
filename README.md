@@ -20,6 +20,28 @@ To also generate test syslog traffic every minute:
 ./start-guardian-log.ps1 -StartSender
 ```
 
+## One-Command Health Check
+
+Run a full runtime check for backend, collector, PostgreSQL, latest stored log, and on-chain confirmation in one command:
+
+```powershell
+./scripts/health-fullstack.ps1
+```
+
+## Auto-Start After Reboot (Windows)
+
+Install logon startup tasks for PostgreSQL 5433, backend, collector, and sender:
+
+```powershell
+./scripts/install-startup-tasks.ps1
+```
+
+Remove startup tasks:
+
+```powershell
+./scripts/uninstall-startup-tasks.ps1
+```
+
 ## Repo Layout
 
 - `frontend/` contains the only production frontend application

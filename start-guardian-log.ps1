@@ -31,6 +31,26 @@ Start-Process powershell -ArgumentList @(
     "Set-Location '$frontendPath'; npm run dev -- --host 127.0.0.1 --port 5174"
 )
 
+# Wait for backend readiness so collector does not start forwarding into a dead endpoint.
+$backendReady = $false
+for ($i = 0; $i -lt 30; $i++) {
+    try {
+        $resp = Invoke-WebRequest -Uri 'http://127.0.0.1:9000/health' -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        if ($resp.StatusCode -eq 200) {
+            $backendReady = $true
+            break
+        }
+    } catch {
+        Start-Sleep -Milliseconds 1000
+    }
+}
+
+if ($backendReady) {
+    Write-Host 'Backend healthcheck OK on :9000.' -ForegroundColor Green
+} else {
+    Write-Host 'Backend healthcheck timed out. Collector will still start, but forwarding may fail until backend is up.' -ForegroundColor Yellow
+}
+
 $collectorExe = Get-ChildItem -Path $collectorDir -Recurse -Include 'agent-syslog-collector*.exe','agent_syslog_collector*.exe' -File -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1

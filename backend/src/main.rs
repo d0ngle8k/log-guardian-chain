@@ -17,7 +17,6 @@ use base64::Engine;
 use ed25519_dalek::{Signer as DalekSigner, SigningKey};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use postgres::{Client, NoTls};
-use rand::Rng;
 use reqwest::multipart as reqwest_mp;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -27,19 +26,105 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
 use uuid::Uuid;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::Mutex;
 
 const RETRY_MAX_ATTEMPTS: u8 = 5;
 const RETRY_DELAY_MS: u64 = 8_000;
 
+async fn validate_solana_signer_config(rpc_url: &str, keypair_path: &str) {
+    let kp_json = match std::fs::read_to_string(keypair_path) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Cannot read keypair file {}: {}", keypair_path, e);
+            return;
+        }
+    };
+
+    let kp_bytes: Vec<u8> = match serde_json::from_str(&kp_json) {
+        Ok(v) => v,
+        Err(e) => {
+            error!("Cannot parse keypair JSON at {}: {}", keypair_path, e);
+            return;
+        }
+    };
+
+    if kp_bytes.len() < 64 {
+        error!("Keypair file {} is too short ({} bytes)", keypair_path, kp_bytes.len());
+        return;
+    }
+
+    let secret: [u8; 32] = match kp_bytes[..32].try_into() {
+        Ok(v) => v,
+        Err(_) => {
+            error!("Invalid secret key bytes in {}", keypair_path);
+            return;
+        }
+    };
+    let public: [u8; 32] = match kp_bytes[32..64].try_into() {
+        Ok(v) => v,
+        Err(_) => {
+            error!("Invalid public key bytes in {}", keypair_path);
+            return;
+        }
+    };
+
+    let signing_key = SigningKey::from_bytes(&secret);
+    let derived_public = signing_key.verifying_key().to_bytes();
+    if derived_public != public {
+        error!(
+            "SYSTEM_KEYPAIR_PATH points to invalid keypair: public key does not match private key ({})",
+            keypair_path
+        );
+        return;
+    }
+
+    let signer_pubkey_b58 = bs58::encode(public).into_string();
+    info!("Solana signer pubkey: {}", signer_pubkey_b58);
+
+    let client = reqwest::Client::new();
+    let req = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getBalance",
+        "params": [signer_pubkey_b58, {"commitment": "confirmed"}]
+    });
+
+    let resp: serde_json::Value = match client.post(rpc_url).json(&req).send().await {
+        Ok(v) => match v.json().await {
+            Ok(j) => j,
+            Err(e) => {
+                warn!("Failed to parse getBalance response: {}", e);
+                return;
+            }
+        },
+        Err(e) => {
+            warn!("Failed to call getBalance: {}", e);
+            return;
+        }
+    };
+
+    if let Some(err) = resp.get("error") {
+        warn!("getBalance RPC error: {}", err);
+        return;
+    }
+
+    let lamports = resp["result"]["value"].as_u64().unwrap_or(0);
+    if lamports == 0 {
+        warn!(
+            "Solana signer has 0 lamports. On-chain registration will fail until this wallet is funded on devnet."
+        );
+    } else {
+        info!("Solana signer balance: {} lamports", lamports);
+    }
+}
+
 #[derive(Debug, Clone)]
-struct RetryJob {
+struct RetryQueueItem {
+    id: i64,
     log_id: String,
-    file_name: String,
-    raw_bytes: Vec<u8>,
-    sha256: String,
-    existing_cid: Option<String>,
-    attempt: u8,
+    retry_count: i32,
+    max_attempts: i32,
+    reason: String,
 }
 
 #[derive(Debug)]
@@ -85,10 +170,83 @@ struct AppState {
     jwt_secret: Arc<String>,
     admin_allowlist: Arc<Vec<String>>,
     gemini_api_key: Option<Arc<String>>,
-    retry_tx: mpsc::Sender<RetryJob>,
     ingest_limiter: Arc<IngestRateLimiter>,
     chat_limiter: Arc<ChatRateLimiter>,
     metrics: Arc<MetricsState>,
+}
+
+#[derive(Serialize)]
+struct RetryJobItem {
+    id: i64,
+    #[serde(rename = "logId")]
+    log_id: String,
+    #[serde(rename = "retryCount")]
+    retry_count: i32,
+    #[serde(rename = "maxAttempts")]
+    max_attempts: i32,
+    reason: String,
+    status: String,
+    #[serde(rename = "nextAttemptAt")]
+    next_attempt_at: i64,
+    #[serde(rename = "lastAttemptedAt")]
+    last_attempted_at: Option<i64>,
+    #[serde(rename = "createdAt")]
+    created_at: i64,
+}
+
+#[derive(Serialize)]
+struct RetryJobsResponse {
+    items: Vec<RetryJobItem>,
+}
+
+#[derive(Default, Deserialize)]
+struct RetryJobsQuery {
+    status: Option<String>,
+}
+
+#[derive(Serialize)]
+struct KpiResponse {
+    #[serde(rename = "ingestFailureRate")]
+    ingest_failure_rate: f64,
+    #[serde(rename = "retryBacklog")]
+    retry_backlog: i64,
+    #[serde(rename = "retryFailed")]
+    retry_failed: i64,
+    #[serde(rename = "auditCoveragePct")]
+    audit_coverage_pct: f64,
+    #[serde(rename = "mttrSeconds")]
+    mttr_seconds: f64,
+}
+
+#[derive(Serialize)]
+struct AuditLogItem {
+    id: i64,
+    #[serde(rename = "eventType")]
+    event_type: String,
+    #[serde(rename = "logId")]
+    log_id: Option<String>,
+    #[serde(rename = "deviceId")]
+    device_id: Option<String>,
+    #[serde(rename = "relatedData")]
+    related_data: serde_json::Value,
+    #[serde(rename = "actorWallet")]
+    actor_wallet: Option<String>,
+    #[serde(rename = "actorRole")]
+    actor_role: Option<String>,
+    #[serde(rename = "createdAt")]
+    created_at: i64,
+}
+
+#[derive(Serialize)]
+struct AuditLogResponse {
+    items: Vec<AuditLogItem>,
+}
+
+#[derive(Default, Deserialize)]
+struct AuditLogQuery {
+    limit: Option<i64>,
+    event_type: Option<String>,
+    log_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -119,7 +277,7 @@ struct IngestResponse {
     ipfs_cid: String,
     tx_signature: String,
     pda_address: String,
-    status: &'static str,
+    status: String,
 }
 
 #[derive(Serialize)]
@@ -427,8 +585,6 @@ async fn main() {
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(60_000);
-    let (retry_tx, retry_rx) = mpsc::channel::<RetryJob>(512);
-
     if pinata_jwt.is_some() {
         info!("Pinata IPFS integration ENABLED");
     } else {
@@ -443,6 +599,10 @@ async fn main() {
         info!("Ingest API key auth ENABLED");
     } else {
         warn!("INGEST_API_KEY not set – ingest endpoint is public");
+    }
+
+    if let Some(path) = system_keypair_path.as_ref() {
+        validate_solana_signer_config(solana_rpc_url.as_ref(), path.as_ref()).await;
     }
 
     let migration_url = postgres_url.clone();
@@ -463,7 +623,6 @@ async fn main() {
         jwt_secret,
         admin_allowlist,
         gemini_api_key,
-        retry_tx,
         ingest_limiter: Arc::new(IngestRateLimiter {
             requests_per_window,
             window_ms,
@@ -476,7 +635,7 @@ async fn main() {
         metrics: Arc::new(MetricsState::default()),
     };
 
-    spawn_retry_worker(state.clone(), retry_rx);
+    spawn_retry_worker(state.clone());
 
     let app = Router::new()
         .route("/health", get(health))
@@ -500,6 +659,10 @@ async fn main() {
             "/api/v1/admin/roles/{wallet_address}",
             delete(admin_revoke_role),
         )
+        .route("/api/v1/admin/retry-jobs", get(admin_list_retry_jobs))
+        .route("/api/v1/admin/retry-jobs/{id}/retry", post(admin_retry_job_now))
+        .route("/api/v1/admin/kpis", get(admin_kpis))
+        .route("/api/v1/admin/audit-log", get(admin_list_audit_log))
         .route("/api/v1/admin/support/chat", post(admin_support_chat))
         .with_state(state)
         .layer(middleware::from_fn(attach_request_id))
@@ -632,74 +795,297 @@ where
     .map_err(|e| ApiError::Internal(format!("database task join error: {e}")))?
 }
 
-fn spawn_retry_worker(state: AppState, mut retry_rx: mpsc::Receiver<RetryJob>) {
+fn spawn_retry_worker(state: AppState) {
     tokio::spawn(async move {
-        while let Some(job) = retry_rx.recv().await {
-            if job.attempt > RETRY_MAX_ATTEMPTS {
-                warn!("Retry queue exceeded max attempts for log_id={}", job.log_id);
-                state.metrics.retry_failure_total.fetch_add(1, Ordering::Relaxed);
-                continue;
-            }
-
-            let mut cid = job.existing_cid.clone();
-            if cid.is_none() {
-                if let Some(jwt) = &state.pinata_jwt {
-                    cid = upload_to_pinata(jwt.as_ref(), job.raw_bytes.clone(), job.file_name.clone()).await;
-                }
-            }
-
-            let mut tx_signature: Option<String> = None;
-            if let (Some(kp_path), Some(final_cid)) = (&state.system_keypair_path, cid.clone()) {
-                let memo_payload = format!(
-                    "{{\"log_id\":\"{}\",\"sha256\":\"{}\",\"cid\":\"{}\"}}",
-                    job.log_id, job.sha256, final_cid
-                );
-                tx_signature = send_memo_to_solana(
-                    state.solana_rpc_url.as_ref().clone(),
-                    kp_path.as_ref().clone(),
-                    memo_payload,
-                )
-                .await;
-            }
-
-            if let (Some(final_cid), Some(final_sig)) = (cid.clone(), tx_signature.clone()) {
-                let log_id = job.log_id.clone();
-                let db_cid = final_cid.clone();
-                let db_sig = final_sig.clone();
-                let update = with_conn(&state, move |conn| {
-                    conn.execute(
-                        "UPDATE logs SET ipfs_cid=$1, blockchain_tx_id=$2, pda_address=$2, updated_at=NOW() WHERE id=$3",
-                        &[&db_cid, &db_sig, &log_id],
-                    )
-                    .map_err(|e| ApiError::Internal(format!("failed updating retry result: {e}")))?;
-                    Ok(())
-                })
-                .await;
-                match update {
-                    Ok(_) => {
-                        state.metrics.retry_success_total.fetch_add(1, Ordering::Relaxed);
-                        info!("Retry worker synced log successfully")
-                    }
-                    Err(err) => error!("Retry worker DB update failed: {:?}", err),
-                }
-                continue;
-            }
-
-            let next_attempt = job.attempt + 1;
-            if next_attempt <= RETRY_MAX_ATTEMPTS {
-                let tx = state.retry_tx.clone();
-                let mut retry_job = job.clone();
-                retry_job.attempt = next_attempt;
-                retry_job.existing_cid = cid;
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(RETRY_DELAY_MS)).await;
-                    if let Err(err) = tx.send(retry_job).await {
-                        error!("Retry queue re-enqueue failed: {}", err);
-                    }
-                });
+        let mut interval = tokio::time::interval(Duration::from_millis(RETRY_DELAY_MS));
+        loop {
+            interval.tick().await;
+            if let Err(err) = process_pending_retry_jobs(&state).await {
+                error!("Retry worker cycle failed: {:?}", err);
             }
         }
     });
+}
+
+async fn write_audit_log(
+    state: &AppState,
+    event_type: &str,
+    log_id: Option<String>,
+    device_id: Option<String>,
+    related_data: serde_json::Value,
+    actor_wallet: Option<String>,
+    actor_role: Option<String>,
+) {
+    let event_type = event_type.to_string();
+    let related_data = related_data.to_string();
+    if let Err(err) = with_conn(state, move |conn| {
+        conn.execute(
+            "INSERT INTO audit_log(event_type, log_id, device_id, related_data, actor_wallet, actor_role, created_at)
+             VALUES ($1, $2, $3, $4::jsonb, $5, $6, NOW())",
+            &[&event_type, &log_id, &device_id, &related_data, &actor_wallet, &actor_role],
+        )
+        .map_err(|e| ApiError::Internal(format!("failed inserting audit_log event: {e}")))?;
+        Ok(())
+    })
+    .await
+    {
+        warn!("audit write failed: {:?}", err);
+    }
+}
+
+async fn enqueue_retry_job(state: &AppState, log_id: &str, reason: &str) {
+    let log_id_owned = log_id.to_string();
+    let reason_owned = reason.to_string();
+    let enqueue = with_conn(state, move |conn| {
+        conn.execute(
+            "INSERT INTO retry_jobs(log_id, retry_count, max_attempts, reason, status, next_attempt_at, created_at)
+             SELECT $1, 0, $2, $3, 'pending', NOW(), NOW()
+             WHERE NOT EXISTS (
+               SELECT 1 FROM retry_jobs WHERE log_id = $1 AND status IN ('pending', 'running')
+             )",
+            &[&log_id_owned, &(RETRY_MAX_ATTEMPTS as i32), &reason_owned],
+        )
+        .map_err(|e| ApiError::Internal(format!("failed enqueue retry job: {e}")))?;
+        Ok(())
+    })
+    .await;
+
+    match enqueue {
+        Ok(_) => {
+            state
+                .metrics
+                .retry_enqueued_total
+                .fetch_add(1, Ordering::Relaxed);
+            write_audit_log(
+                state,
+                "retry_job_created",
+                Some(log_id.to_string()),
+                None,
+                serde_json::json!({ "reason": reason }),
+                None,
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            error!("Failed to enqueue retry job in DB: {:?}", err);
+            state
+                .metrics
+                .retry_failure_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+async fn process_pending_retry_jobs(state: &AppState) -> Result<(), ApiError> {
+    let jobs = with_conn(state, move |conn| {
+        let rows = conn
+            .query(
+                "UPDATE retry_jobs
+                 SET status = 'running', last_attempted_at = NOW(), retry_count = retry_count + 1
+                 WHERE id IN (
+                    SELECT id FROM retry_jobs
+                    WHERE status = 'pending' AND next_attempt_at <= NOW()
+                    ORDER BY next_attempt_at ASC
+                    LIMIT 25
+                 )
+                 RETURNING id, log_id, retry_count, max_attempts, reason",
+                &[],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed claiming retry jobs: {e}")))?;
+
+        let mut items = Vec::<RetryQueueItem>::new();
+        for row in rows {
+            items.push(RetryQueueItem {
+                id: row.get(0),
+                log_id: row.get(1),
+                retry_count: row.get(2),
+                max_attempts: row.get(3),
+                reason: row.get(4),
+            });
+        }
+        Ok(items)
+    })
+    .await?;
+
+    for job in jobs {
+        process_single_retry_job(state, job).await;
+    }
+
+    Ok(())
+}
+
+async fn process_single_retry_job(state: &AppState, job: RetryQueueItem) {
+    let log_id_lookup = job.log_id.clone();
+    let source = with_conn(state, move |conn| {
+        let row = conn
+            .query_opt(
+                "SELECT hash, raw_content, ipfs_cid, device_id FROM logs WHERE id = $1",
+                &[&log_id_lookup],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed loading retry source log: {e}")))?;
+
+        match row {
+            Some(r) => Ok((
+                r.get::<_, String>(0),
+                r.get::<_, Vec<u8>>(1),
+                r.get::<_, String>(2),
+                r.get::<_, String>(3),
+            )),
+            None => Err(ApiError::NotFound("retry source log not found".to_string())),
+        }
+    })
+    .await;
+
+    let (sha256, raw_bytes, existing_ipfs_cid, device_id) = match source {
+        Ok(v) => v,
+        Err(err) => {
+            error!("Retry source lookup failed for log {}: {:?}", job.log_id, err);
+            let retry_id = job.id;
+            let _ = with_conn(state, move |conn| {
+                conn.execute(
+                    "UPDATE retry_jobs SET status='failed', completed_at = NOW() WHERE id = $1",
+                    &[&retry_id],
+                )
+                .map_err(|e| ApiError::Internal(format!("failed finalizing missing retry source: {e}")))?;
+                Ok(())
+            })
+            .await;
+            state.metrics.retry_failure_total.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+    };
+
+    let mut cid = if job.reason.starts_with("pinata") {
+        None
+    } else {
+        Some(existing_ipfs_cid)
+    };
+
+    if cid.is_none() {
+        if let Some(jwt) = &state.pinata_jwt {
+            cid = upload_to_pinata(
+                jwt.as_ref(),
+                raw_bytes.clone(),
+                format!("{}.retry.log", job.log_id),
+            )
+            .await;
+        }
+    }
+
+    let mut tx_signature: Option<String> = None;
+    if let (Some(kp_path), Some(final_cid)) = (&state.system_keypair_path, cid.clone()) {
+        let memo_payload = format!(
+            "{{\"log_id\":\"{}\",\"sha256\":\"{}\",\"cid\":\"{}\"}}",
+            job.log_id, sha256, final_cid
+        );
+        tx_signature = send_memo_to_solana(
+            state.solana_rpc_url.as_ref().clone(),
+            kp_path.as_ref().clone(),
+            memo_payload,
+        )
+        .await;
+    }
+
+    if let (Some(final_cid), Some(final_sig)) = (cid.clone(), tx_signature.clone()) {
+        let job_id = job.id;
+        let log_id = job.log_id.clone();
+        let update = with_conn(state, move |conn| {
+            conn.execute(
+                "UPDATE logs
+                 SET ipfs_cid = $1,
+                     blockchain_tx_id = $2,
+                     pda_address = $2,
+                     verification_status = 'confirmed',
+                     retry_count = COALESCE(retry_count, 0) + 1,
+                     updated_at = NOW()
+                 WHERE id = $3",
+                &[&final_cid, &final_sig, &log_id],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed applying retry result to log: {e}")))?;
+
+            conn.execute(
+                "UPDATE retry_jobs SET status='completed', completed_at = NOW() WHERE id = $1",
+                &[&job_id],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed completing retry job: {e}")))?;
+            Ok(())
+        })
+        .await;
+
+        match update {
+            Ok(_) => {
+                state.metrics.retry_success_total.fetch_add(1, Ordering::Relaxed);
+                write_audit_log(
+                    state,
+                    "retry_job_completed",
+                    Some(job.log_id.clone()),
+                    Some(device_id),
+                    serde_json::json!({
+                        "retry_job_id": job.id,
+                        "attempt": job.retry_count,
+                        "reason": job.reason,
+                    }),
+                    None,
+                    None,
+                )
+                .await;
+                info!("Retry worker completed log_id={}", job.log_id);
+            }
+            Err(err) => {
+                error!("Retry completion update failed for {}: {:?}", job.log_id, err);
+                state.metrics.retry_failure_total.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        return;
+    }
+
+    let retry_id = job.id;
+    if job.retry_count >= job.max_attempts {
+        let _ = with_conn(state, move |conn| {
+            conn.execute(
+                "UPDATE retry_jobs SET status='failed', completed_at = NOW() WHERE id = $1",
+                &[&retry_id],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed marking retry job failed: {e}")))?;
+            Ok(())
+        })
+        .await;
+        state.metrics.retry_failure_total.fetch_add(1, Ordering::Relaxed);
+        write_audit_log(
+            state,
+            "retry_job_failed",
+            Some(job.log_id),
+            Some(device_id),
+            serde_json::json!({
+                "retry_job_id": job.id,
+                "attempt": job.retry_count,
+                "reason": job.reason,
+            }),
+            None,
+            None,
+        )
+        .await;
+    } else {
+        let retry_id = job.id;
+        let exponent: u32 = if job.retry_count <= 1 {
+            0
+        } else {
+            (job.retry_count - 1).min(6) as u32
+        };
+        let delay_seconds = ((RETRY_DELAY_MS / 1000) as i64) * (1_i64 << exponent);
+        let _ = with_conn(state, move |conn| {
+            conn.execute(
+                "UPDATE retry_jobs
+                 SET status='pending', next_attempt_at = NOW() + ($2 || ' seconds')::interval
+                 WHERE id = $1",
+                &[&retry_id, &delay_seconds],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed requeueing retry job: {e}")))?;
+            Ok(())
+        })
+        .await;
+    }
 }
 
 async fn attach_request_id(request: Request, next: Next) -> Response {
@@ -802,9 +1188,20 @@ async fn send_memo_to_solana(rpc_url: String, keypair_path: String, memo: String
         error!("Keypair file is too short ({} bytes)", kp_bytes.len());
         return None;
     }
+
     let secret: [u8; 32] = kp_bytes[..32].try_into().ok()?;
-    let public: [u8; 32] = kp_bytes[32..64].try_into().ok()?;
     let signing_key = SigningKey::from_bytes(&secret);
+    let derived_public = signing_key.verifying_key().to_bytes();
+
+    // Keep signer deterministic even if file public bytes are stale/malformed.
+    if let Ok(file_public) = <[u8; 32]>::try_from(&kp_bytes[32..64]) {
+        if file_public != derived_public {
+            warn!(
+                "Keypair public bytes do not match secret key at {}. Using derived public key instead.",
+                keypair_path
+            );
+        }
+    }
 
     // Memo Program v2 – raw public key bytes (base58: MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr)
     let memo_program: [u8; 32] = bs58::decode("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr")
@@ -814,6 +1211,42 @@ async fn send_memo_to_solana(rpc_url: String, keypair_path: String, memo: String
         .ok()?;
 
     let client = reqwest::Client::new();
+
+    // On devnet, try to self-heal empty wallets once before sending.
+    if rpc_url.contains("devnet") {
+        let signer_pubkey_b58 = bs58::encode(derived_public).into_string();
+        let balance_req = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getBalance",
+            "params": [signer_pubkey_b58, {"commitment": "confirmed"}]
+        });
+        if let Ok(resp) = client.post(&rpc_url).json(&balance_req).send().await {
+            if let Ok(json) = resp.json::<serde_json::Value>().await {
+                let lamports = json["result"]["value"].as_u64().unwrap_or(0);
+                if lamports == 0 {
+                    warn!(
+                        "Solana signer has 0 lamports; attempting devnet airdrop before memo send"
+                    );
+                    let airdrop_req = serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1,
+                        "method": "requestAirdrop",
+                        "params": [bs58::encode(derived_public).into_string(), 10000000]
+                    });
+                    match client.post(&rpc_url).json(&airdrop_req).send().await {
+                        Ok(airdrop_resp) => {
+                            let airdrop_json: serde_json::Value = airdrop_resp.json().await.unwrap_or_default();
+                            if let Some(err) = airdrop_json.get("error") {
+                                warn!("Devnet airdrop failed: {}", err);
+                            } else {
+                                info!("Devnet airdrop requested successfully for signer wallet");
+                            }
+                        }
+                        Err(e) => warn!("Devnet airdrop request error: {}", e),
+                    }
+                }
+            }
+        }
+    }
 
     // ── 2. Get recent blockhash ─────────────────────────────────────────────
     let bh_req = serde_json::json!({
@@ -862,7 +1295,7 @@ async fn send_memo_to_solana(rpc_url: String, keypair_path: String, memo: String
     msg.push(1); // num_readonly_unsigned_accounts
     // Account keys
     msg.extend(cu16(2));
-    msg.extend_from_slice(&public);
+    msg.extend_from_slice(&derived_public);
     msg.extend_from_slice(&memo_program);
     // Recent blockhash
     msg.extend_from_slice(&blockhash);
@@ -904,6 +1337,11 @@ async fn send_memo_to_solana(rpc_url: String, keypair_path: String, memo: String
 
     if let Some(err) = send_resp.get("error") {
         error!("Solana RPC error: {}", err);
+        if err.to_string().contains("AccountNotFound") || err.to_string().contains("InvalidAccountForFee") {
+            warn!(
+                "Signer wallet cannot pay fee yet. Fund SYSTEM_KEYPAIR_PATH wallet on devnet to enable on-chain memo registration."
+            );
+        }
         return None;
     }
     send_resp["result"].as_str().map(|s| s.to_string())
@@ -911,17 +1349,6 @@ async fn send_memo_to_solana(rpc_url: String, keypair_path: String, memo: String
 
 fn fake_ipfs_cid(hash: &str) -> String {
     format!("bafy{}", &hash[..52.min(hash.len())])
-}
-
-fn random_base58(length: usize) -> String {
-    const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-    let mut rng = rand::rng();
-    (0..length)
-        .map(|_| {
-            let idx = rng.random_range(0..ALPHABET.len());
-            ALPHABET[idx] as char
-        })
-        .collect()
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -1124,14 +1551,16 @@ async fn ingest_log(
                 sig
             }
             None => {
-                warn!("Solana Memo tx failed – falling back to random signature");
+                warn!("Solana Memo tx failed – wallet likely unfunded. Marking as pending.");
                 solana_failed = true;
-                random_base58(88)
+                // Use null/empty to indicate Solana pending (not invalid fallback signature)
+                String::new()
             }
         }
     } else {
         solana_failed = true;
-        random_base58(88)
+        // Use null/empty to indicate Solana not configured
+        String::new()
     };
     // With Memo Program we don't derive a PDA – store the tx sig as the anchor reference
     let pda_address = tx_signature.clone();
@@ -1149,6 +1578,16 @@ async fn ingest_log(
         .take(8192)
         .collect::<String>();
 
+    let db_verification_status = if db_tx_signature.is_empty() {
+        if state.system_keypair_path.is_none() {
+            "pending_no_solana"
+        } else {
+            "pending_funding"
+        }
+    } else {
+        "confirmed"
+    };
+
     with_conn(&state, move |conn| {
         conn.execute(
             "INSERT INTO logs(
@@ -1157,7 +1596,7 @@ async fn ingest_log(
                 format, file_size, raw_content, pda_address
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
-                $9, 'pending', 0, NOW(), NOW(),
+                $9, $14, 0, NOW(), NOW(),
                 $10, $11, $12, $13
             )",
             &[
@@ -1174,6 +1613,7 @@ async fn ingest_log(
                 &(total_bytes as i64),
                 &db_raw_bytes,
                 &db_pda_address,
+                &db_verification_status,
             ],
         )
         .map_err(|e| ApiError::Internal(format!("failed inserting log entry: {e}")))?;
@@ -1181,33 +1621,45 @@ async fn ingest_log(
     })
     .await?;
 
+    write_audit_log(
+        &state,
+        "log_ingested",
+        Some(log_id.clone()),
+        Some(device_id.clone()),
+        serde_json::json!({
+            "status": db_verification_status,
+            "format": format.clone(),
+            "source": "multipart",
+        }),
+        None,
+        None,
+    )
+    .await;
+
     if pinata_failed || solana_failed {
-        let retry_job = RetryJob {
-            log_id: log_id.clone(),
-            file_name: file_name.clone().unwrap_or_else(|| format!("{log_id}.log")),
-            raw_bytes: raw_bytes.clone(),
-            sha256: sha256.clone(),
-            existing_cid: if pinata_failed { None } else { Some(ipfs_cid.clone()) },
-            attempt: 1,
-        };
-        if let Err(err) = state.retry_tx.send(retry_job).await {
-            error!("Failed to enqueue retry job: {}", err);
-            state
-                .metrics
-                .retry_failure_total
-                .fetch_add(1, Ordering::Relaxed);
+        let reason = if pinata_failed {
+            "pinata_upload_failed"
         } else {
-            state
-                .metrics
-                .retry_enqueued_total
-                .fetch_add(1, Ordering::Relaxed);
-        }
+            "solana_network_error"
+        };
+        enqueue_retry_job(&state, &log_id, reason).await;
     }
 
     state
         .metrics
         .ingest_success_total
         .fetch_add(1, Ordering::Relaxed);
+
+    // Set status based on what actually succeeded
+    let status_str = if tx_signature.is_empty() {
+        if state.system_keypair_path.is_none() {
+            "pending_no_solana_config"
+        } else {
+            "pending_solana_funding"
+        }
+    } else {
+        "confirmed"
+    };
 
     let response = IngestResponse {
         request_id: Uuid::new_v4().to_string(),
@@ -1219,9 +1671,13 @@ async fn ingest_log(
         file_size_bytes: total_bytes,
         sha256,
         ipfs_cid,
-        tx_signature,
+        tx_signature: if tx_signature.is_empty() {
+            String::from("PENDING")
+        } else {
+            tx_signature
+        },
         pda_address,
-        status: "received",
+        status: status_str.to_string(),
     };
 
     Ok(Json(response))
@@ -1280,7 +1736,7 @@ async fn ingest_fluentd(
     if let Some(key) = idempotency_key.clone() {
         let existing = with_conn(&state, move |conn| {
             conn.query_opt(
-                "SELECT id, device_id, timestamp_ms, format, file_size, hash, ipfs_cid, blockchain_tx_id, COALESCE(pda_address, blockchain_tx_id)
+                "SELECT id, device_id, timestamp_ms, format, file_size, hash, ipfs_cid, blockchain_tx_id, COALESCE(pda_address, blockchain_tx_id), verification_status
                  FROM logs WHERE idempotency_key = $1",
                 &[&key],
             )
@@ -1305,7 +1761,7 @@ async fn ingest_fluentd(
                 ipfs_cid: row.get::<_, String>(6),
                 tx_signature: row.get::<_, String>(7),
                 pda_address: row.get::<_, String>(8),
-                status: "received",
+                status: row.get::<_, String>(9),
             }));
         }
     }
@@ -1353,13 +1809,13 @@ async fn ingest_fluentd(
                 sig
             }
             None => {
-                warn!("Collector: Solana Memo tx failed – falling back to random signature");
-                random_base58(88)
+                warn!("Collector: Solana Memo tx failed – wallet likely unfunded. Marking as pending.");
+                String::new()
             }
         }
     } else {
-        warn!("Collector: SYSTEM_KEYPAIR_PATH not set – using fallback signature");
-        random_base58(88)
+        warn!("Collector: SYSTEM_KEYPAIR_PATH not set – Solana not configured");
+        String::new()
     };
     
     let pda_address = tx_signature.clone();
@@ -1377,6 +1833,16 @@ async fn ingest_fluentd(
     let db_tx_signature = tx_signature.clone();
     let db_pda_address = pda_address.clone();
     let db_raw_bytes = raw_bytes.clone();
+    
+    let db_verification_status = if db_tx_signature.is_empty() {
+        if state.system_keypair_path.is_none() {
+            "pending_no_solana"
+        } else {
+            "pending_funding"
+        }
+    } else {
+        "confirmed"
+    };
     let db_agent_id = agent_id.clone();
     let db_source_type = source_type.clone();
     let db_seq_no = seq_no;
@@ -1391,9 +1857,9 @@ async fn ingest_fluentd(
                 agent_id, source_type, seq_no, batch_id, idempotency_key
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8,
-                $9, 'pending', 0, NOW(), NOW(),
-                $10, $11, $12, $13,
-                $14, $15, $16, $17, $18
+                $9, $10, 0, NOW(), NOW(),
+                $11, $12, $13, $14,
+                $15, $16, $17, $18, $19
             )",
             &[
                 &db_log_id,
@@ -1405,6 +1871,7 @@ async fn ingest_fluentd(
                 &db_sha256,
                 &db_ipfs_cid,
                 &db_tx_signature,
+                &db_verification_status,
                 &db_format,
                 &(total_bytes as i64),
                 &db_raw_bytes,
@@ -1421,6 +1888,31 @@ async fn ingest_fluentd(
     })
     .await?;
 
+    write_audit_log(
+        &state,
+        "log_ingested",
+        Some(log_id.clone()),
+        Some(device_id.clone()),
+        serde_json::json!({
+            "status": db_verification_status,
+            "format": format.clone(),
+            "source": "collector",
+            "agent_id": agent_id.clone(),
+        }),
+        None,
+        None,
+    )
+    .await;
+
+    if tx_signature.is_empty() {
+        let reason = if state.system_keypair_path.is_none() {
+            "solana_unfunded"
+        } else {
+            "solana_network_error"
+        };
+        enqueue_retry_job(&state, &log_id, reason).await;
+    }
+
     state
         .metrics
         .ingest_success_total
@@ -1430,7 +1922,17 @@ async fn ingest_fluentd(
         .collector_ingest_success_total
         .fetch_add(1, Ordering::Relaxed);
 
-    Ok(Json(IngestResponse {
+    let status_str = if tx_signature.is_empty() {
+        if state.system_keypair_path.is_none() {
+            "pending_no_solana_config"
+        } else {
+            "pending_solana_funding"
+        }
+    } else {
+        "confirmed"
+    };
+
+    let response = IngestResponse {
         request_id: Uuid::new_v4().to_string(),
         log_id,
         device_id,
@@ -1440,10 +1942,16 @@ async fn ingest_fluentd(
         file_size_bytes: total_bytes,
         sha256,
         ipfs_cid,
-        tx_signature,
+        tx_signature: if tx_signature.is_empty() {
+            String::from("PENDING")
+        } else {
+            tx_signature
+        },
         pda_address,
-        status: "received",
-    }))
+        status: status_str.to_string(),
+    };
+
+    Ok(Json(response))
 }
 
 async fn list_logs(
@@ -1803,6 +2311,22 @@ async fn verify_log(
     })
     .await?;
 
+    write_audit_log(
+        &state,
+        if verified { "log_verified" } else { "log_tampered" },
+        Some(id.clone()),
+        None,
+        serde_json::json!({
+            "expected_hash": expected_hash.clone(),
+            "actual_hash": actual_hash.clone(),
+            "verified": verified,
+            "on_chain_verified": on_chain_verified,
+        }),
+        Some(claims.sub.clone()),
+        Some(claims.role.clone()),
+    )
+    .await;
+
     if verified {
         state
             .metrics
@@ -1913,6 +2437,21 @@ async fn report_log(
         Ok(())
     })
     .await?;
+
+    write_audit_log(
+        &state,
+        "log_reported",
+        Some(id.clone()),
+        None,
+        serde_json::json!({
+            "report_flag": report_flag.clone(),
+            "report_reason": report_reason.clone(),
+            "status": status.clone(),
+        }),
+        Some(reporter_wallet.clone()),
+        Some(reporter_role.clone()),
+    )
+    .await;
 
     Ok(Json(ReportLogResponse {
         log_id: id,
@@ -2246,6 +2785,228 @@ async fn admin_revoke_role(
     Ok(Json(LogoutResponse { status: "ok" }))
 }
 
+async fn admin_list_retry_jobs(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<RetryJobsQuery>,
+) -> Result<Json<RetryJobsResponse>, ApiError> {
+    let claims = require_auth(&headers, &state)?;
+    ensure_claim_role(&claims, &["admin"])?;
+
+    let status_filter = query.status.unwrap_or_else(|| "pending".to_string()).to_lowercase();
+    let status_for_db = if ["pending", "running", "completed", "failed", "abandoned"].contains(&status_filter.as_str()) {
+        status_filter
+    } else {
+        "pending".to_string()
+    };
+
+    let items = with_conn(&state, move |conn| {
+        let rows = conn
+            .query(
+                "SELECT id, log_id, retry_count, max_attempts, reason, status,
+                        EXTRACT(EPOCH FROM next_attempt_at)::BIGINT * 1000,
+                        CASE WHEN last_attempted_at IS NULL THEN NULL ELSE EXTRACT(EPOCH FROM last_attempted_at)::BIGINT * 1000 END,
+                        EXTRACT(EPOCH FROM created_at)::BIGINT * 1000
+                 FROM retry_jobs
+                 WHERE status = $1
+                 ORDER BY next_attempt_at ASC
+                 LIMIT 200",
+                &[&status_for_db],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed listing retry jobs: {e}")))?;
+
+        let mut list = Vec::<RetryJobItem>::new();
+        for row in rows {
+            list.push(RetryJobItem {
+                id: row.get(0),
+                log_id: row.get(1),
+                retry_count: row.get(2),
+                max_attempts: row.get(3),
+                reason: row.get(4),
+                status: row.get(5),
+                next_attempt_at: row.get(6),
+                last_attempted_at: row.get(7),
+                created_at: row.get(8),
+            });
+        }
+        Ok(list)
+    })
+    .await?;
+
+    Ok(Json(RetryJobsResponse { items }))
+}
+
+async fn admin_retry_job_now(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<i64>,
+) -> Result<Json<LogoutResponse>, ApiError> {
+    let claims = require_auth(&headers, &state)?;
+    ensure_claim_role(&claims, &["admin"])?;
+
+    let affected = with_conn(&state, move |conn| {
+        let count = conn
+            .execute(
+                "UPDATE retry_jobs
+                 SET status = 'pending',
+                     retry_count = 0,
+                     next_attempt_at = NOW(),
+                     completed_at = NULL
+                 WHERE id = $1",
+                &[&id],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed forcing retry job: {e}")))?;
+        Ok(count)
+    })
+    .await?;
+
+    if affected == 0 {
+        return Err(ApiError::NotFound("retry job not found".to_string()));
+    }
+
+    Ok(Json(LogoutResponse { status: "ok" }))
+}
+
+async fn admin_kpis(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<KpiResponse>, ApiError> {
+    let claims = require_auth(&headers, &state)?;
+    ensure_claim_role(&claims, &["admin"])?;
+
+    let db = with_conn(&state, move |conn| {
+        let retry_backlog: i64 = conn
+            .query_opt("SELECT COUNT(*)::BIGINT FROM retry_jobs WHERE status IN ('pending', 'running')", &[])
+            .ok()
+            .flatten()
+            .and_then(|row| row.try_get::<_, i64>(0).ok())
+            .unwrap_or(0);
+
+        let retry_failed: i64 = conn
+            .query_opt("SELECT COUNT(*)::BIGINT FROM retry_jobs WHERE status = 'failed'", &[])
+            .ok()
+            .flatten()
+            .and_then(|row| row.try_get::<_, i64>(0).ok())
+            .unwrap_or(0);
+
+        let total_logs: i64 = conn
+            .query_opt("SELECT COUNT(*)::BIGINT FROM logs", &[])
+            .ok()
+            .flatten()
+            .and_then(|row| row.try_get::<_, i64>(0).ok())
+            .unwrap_or(0);
+
+        let audited_logs: i64 = conn
+            .query_opt("SELECT COUNT(DISTINCT log_id)::BIGINT FROM audit_log WHERE log_id IS NOT NULL", &[])
+            .ok()
+            .flatten()
+            .and_then(|row| row.try_get::<_, i64>(0).ok())
+            .unwrap_or(0);
+
+        let mttr_seconds: f64 = conn
+            .query_opt(
+                "SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (completed_at - created_at))), 0)::FLOAT8
+                 FROM retry_jobs
+                 WHERE status = 'completed' AND completed_at IS NOT NULL",
+                &[],
+            )
+            .ok()
+            .flatten()
+            .and_then(|row| row.try_get::<_, f64>(0).ok())
+            .unwrap_or(0.0);
+
+        Ok((retry_backlog, retry_failed, total_logs, audited_logs, mttr_seconds))
+    })
+    .await?;
+
+    let requests = state.metrics.ingest_requests_total.load(Ordering::Relaxed) as f64;
+    let rejected = state.metrics.ingest_rejected_total.load(Ordering::Relaxed) as f64;
+    let ingest_failure_rate = if requests > 0.0 {
+        (rejected / requests) * 100.0
+    } else {
+        0.0
+    };
+
+    let audit_coverage_pct = if db.2 > 0 {
+        ((db.3 as f64) / (db.2 as f64)) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(Json(KpiResponse {
+        ingest_failure_rate,
+        retry_backlog: db.0,
+        retry_failed: db.1,
+        audit_coverage_pct,
+        mttr_seconds: db.4,
+    }))
+}
+
+async fn admin_list_audit_log(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<AuditLogQuery>,
+) -> Result<Json<AuditLogResponse>, ApiError> {
+    let claims = require_auth(&headers, &state)?;
+    ensure_claim_role(&claims, &["admin"])?;
+
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let event_type = query
+        .event_type
+        .as_ref()
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty());
+    let log_id = query
+        .log_id
+        .as_ref()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let items = with_conn(&state, move |conn| {
+        let rows = conn
+            .query(
+                "SELECT id,
+                        event_type,
+                        log_id,
+                        device_id,
+                        related_data::text,
+                        actor_wallet,
+                        actor_role,
+                        EXTRACT(EPOCH FROM created_at)::BIGINT * 1000 AS created_at_ms
+                 FROM audit_log
+                 WHERE ($1::TEXT IS NULL OR event_type = $1)
+                   AND ($2::TEXT IS NULL OR log_id = $2)
+                 ORDER BY created_at DESC
+                 LIMIT $3",
+                &[&event_type, &log_id, &limit],
+            )
+            .map_err(|e| ApiError::Internal(format!("failed listing audit logs: {e}")))?;
+
+        let mut list = Vec::<AuditLogItem>::new();
+        for row in rows {
+            let related_data_raw: String = row.get(4);
+            let related_data = serde_json::from_str::<serde_json::Value>(&related_data_raw)
+                .unwrap_or(serde_json::Value::Null);
+
+            list.push(AuditLogItem {
+                id: row.get(0),
+                event_type: row.get(1),
+                log_id: row.get(2),
+                device_id: row.get(3),
+                related_data,
+                actor_wallet: row.get(5),
+                actor_role: row.get(6),
+                created_at: row.get(7),
+            });
+        }
+
+        Ok(list)
+    })
+    .await?;
+
+    Ok(Json(AuditLogResponse { items }))
+}
+
 async fn admin_support_chat(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2334,3 +3095,4 @@ async fn admin_support_chat(
 
     Ok(Json(SupportChatResponse { answer }))
 }
+

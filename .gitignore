@@ -31,3 +31,18 @@ backend/run_out.txt
 backend/run_err.txt
 frontend/test-results/
 solana-program/anchor-build.exit
+
+# Rust/Anchor build outputs
+backend/target/
+solana-program/target/
+agent-syslog-collector/target/
+
+# Local runtime state
+.local-postgres/
+
+# Local env and keys
+backend/.env
+frontend/keypair.json
+
+# Bun workspace should use bun.lockb
+frontend/package-lock.json

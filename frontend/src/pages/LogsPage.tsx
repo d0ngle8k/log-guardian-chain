@@ -8,7 +8,7 @@ import { VerificationModal } from '@/components/logs/VerificationModal.tsx';
 import { truncateHash, formatFileSize, formatTimestamp } from '@/lib/hashUtils';
 import { LogEntry, VerificationStatus } from '@/lib/types';
 import { useQuery } from '@tanstack/react-query';
-import { fetchLogs, reportLog, verifyLog } from '@/lib/api';
+import { fetchLogs, getAuthSession, reportLog, verifyLog } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
   Select,
@@ -34,9 +34,15 @@ const LogsPage = () => {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, VerificationStatus>>({});
   const [verifiedOnce, setVerifiedOnce] = useState<Record<string, boolean>>({});
   const [isVerifyingAll, setIsVerifyingAll] = useState(false);
+  const [isVerifyingSelected, setIsVerifyingSelected] = useState(false);
+  const [isReportingSelected, setIsReportingSelected] = useState(false);
   const [verifyingLogId, setVerifyingLogId] = useState<string | null>(null);
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
+  const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
   const [verifyMessage, setVerifyMessage] = useState<string | null>(null);
+
+  const session = getAuthSession();
+  const isAdmin = session.role === 'admin';
 
   useEffect(() => {
     try {
@@ -124,6 +130,49 @@ const LogsPage = () => {
     }
     return getEffectiveStatus(log) === statusFilter;
   });
+
+  const selectableLogs = displayedLogs.filter((log) => {
+    const status = getEffectiveStatus(log);
+    return (status === 'unverified' || status === 'tampered') && !verifiedOnce[log.id];
+  });
+
+  useEffect(() => {
+    // Keep only currently eligible selections.
+    const visibleIds = new Set(selectableLogs.map((log) => log.id));
+    setSelectedLogIds((prev) => {
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (visibleIds.has(id)) {
+          next.add(id);
+        }
+      });
+      return next;
+    });
+  }, [selectableLogs]);
+
+  const toggleSelectLog = (logId: string, checked: boolean) => {
+    setSelectedLogIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(logId);
+      } else {
+        next.delete(logId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = (checked: boolean) => {
+    setSelectedLogIds(() => {
+      if (!checked) {
+        return new Set();
+      }
+      return new Set(selectableLogs.map((log) => log.id));
+    });
+  };
+
+  const selectedLogs = selectableLogs.filter((log) => selectedLogIds.has(log.id));
+  const allVisibleSelected = selectableLogs.length > 0 && selectedLogs.length === selectableLogs.length;
 
   const verifySingleLog = async (log: LogEntry) => {
     if (verifiedOnce[log.id]) {
@@ -303,6 +352,117 @@ const LogsPage = () => {
     }
   };
 
+  const verifySelectedLogs = async () => {
+    if (selectedLogs.length === 0) {
+      setVerifyMessage('Select at least one log to verify.');
+      return;
+    }
+
+    setIsVerifyingSelected(true);
+    setVerifyMessage(null);
+
+    try {
+      let verifiedCount = 0;
+      let tamperedCount = 0;
+      let failedCount = 0;
+      let skippedCount = 0;
+      const nextOverrides: Record<string, VerificationStatus> = {};
+      const nextVerifiedOnce: Record<string, boolean> = {};
+
+      for (const log of selectedLogs) {
+        if (verifiedOnce[log.id]) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const flag = riskFlags[log.id] ?? 'normal';
+        if (flag !== 'normal') {
+          skippedCount += 1;
+          continue;
+        }
+
+        try {
+          const result = await verifyLog(log.id);
+          if (result.verified) {
+            verifiedCount += 1;
+            nextOverrides[log.id] = 'verified';
+          } else {
+            tamperedCount += 1;
+            nextOverrides[log.id] = 'tampered';
+          }
+          nextVerifiedOnce[log.id] = true;
+        } catch {
+          failedCount += 1;
+        }
+      }
+
+      setStatusOverrides((prev) => ({ ...prev, ...nextOverrides }));
+      setVerifiedOnce((prev) => ({ ...prev, ...nextVerifiedOnce }));
+      setSelectedLogIds(new Set());
+      setVerifyMessage(
+        `Verify selected done: ${verifiedCount} verified, ${tamperedCount} tampered, ${skippedCount} skipped, ${failedCount} failed.`,
+      );
+      await logsQuery.refetch();
+    } catch (error) {
+      setVerifyMessage(`Verify selected failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    } finally {
+      setIsVerifyingSelected(false);
+    }
+  };
+
+  const reportSelectedLogs = async () => {
+    if (selectedLogs.length === 0) {
+      setVerifyMessage('Select at least one log to report.');
+      return;
+    }
+
+    setIsReportingSelected(true);
+    setVerifyMessage(null);
+
+    try {
+      let reportedCount = 0;
+      let skippedCount = 0;
+      let failedCount = 0;
+      const nextOverrides: Record<string, VerificationStatus> = {};
+      const nextVerifiedOnce: Record<string, boolean> = {};
+
+      for (const log of selectedLogs) {
+        if (verifiedOnce[log.id]) {
+          skippedCount += 1;
+          continue;
+        }
+
+        const flag = riskFlags[log.id] ?? 'normal';
+        if (flag === 'normal') {
+          skippedCount += 1;
+          continue;
+        }
+
+        try {
+          const result = await reportLog({
+            logId: log.id,
+            reportFlag: flag,
+          });
+          nextOverrides[log.id] = result.status as VerificationStatus;
+          nextVerifiedOnce[log.id] = true;
+          reportedCount += 1;
+        } catch {
+          failedCount += 1;
+        }
+      }
+
+      setStatusOverrides((prev) => ({ ...prev, ...nextOverrides }));
+      setVerifiedOnce((prev) => ({ ...prev, ...nextVerifiedOnce }));
+      setSelectedLogIds(new Set());
+      setVerifyMessage(`Report selected done: ${reportedCount} reported, ${skippedCount} skipped, ${failedCount} failed.`);
+      await logsQuery.refetch();
+    } catch (error) {
+      setVerifyMessage(`Report selected failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+    } finally {
+      setIsReportingSelected(false);
+    }
+  };
+
   return (
     <div className="w-full min-w-0 space-y-4">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -366,7 +526,34 @@ const LogsPage = () => {
           <ShieldCheck className="w-4 h-4" />
           {isVerifyingAll ? 'Verifying All...' : 'Verify All Logs'}
         </Button>
+        {isAdmin && (
+          <>
+            <Button
+              variant="outline"
+              onClick={verifySelectedLogs}
+              disabled={selectedLogs.length === 0 || isVerifyingSelected || logsQuery.isFetching}
+              className="w-full sm:w-auto gap-2"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              {isVerifyingSelected ? 'Verifying Selected...' : `Verify Selected (${selectedLogs.length})`}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={reportSelectedLogs}
+              disabled={selectedLogs.length === 0 || isReportingSelected || logsQuery.isFetching}
+              className="w-full sm:w-auto gap-2"
+            >
+              <Flag className="w-4 h-4" />
+              {isReportingSelected ? 'Reporting Selected...' : `Report Selected (${selectedLogs.length})`}
+            </Button>
+          </>
+        )}
       </motion.div>
+      {isAdmin && (
+        <p className="text-xs text-muted-foreground">
+          Bulk rules: Only unverified/tampered logs are selectable; verified logs are locked and cannot be ticked.
+        </p>
+      )}
 
       {/* Table */}
       <motion.div
@@ -379,6 +566,17 @@ const LogsPage = () => {
           <table className="min-w-[1180px] w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/30">
+                {isAdmin && (
+                  <th className="px-3 py-3 text-center">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      disabled={selectableLogs.length === 0}
+                      onChange={(e) => toggleSelectAllVisible(e.target.checked)}
+                      aria-label="Select all eligible logs"
+                    />
+                  </th>
+                )}
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">ID</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Device</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Timestamp</th>
@@ -394,12 +592,12 @@ const LogsPage = () => {
             <tbody>
               {logsQuery.isLoading && (
                 <tr>
-                  <td className="px-4 py-6 text-sm text-muted-foreground" colSpan={10}>Loading logs...</td>
+                  <td className="px-4 py-6 text-sm text-muted-foreground" colSpan={isAdmin ? 11 : 10}>Loading logs...</td>
                 </tr>
               )}
               {!logsQuery.isLoading && displayedLogs.length === 0 && (
                 <tr>
-                  <td className="px-4 py-6 text-sm text-muted-foreground" colSpan={10}>No logs found.</td>
+                  <td className="px-4 py-6 text-sm text-muted-foreground" colSpan={isAdmin ? 11 : 10}>No logs found.</td>
                 </tr>
               )}
               {displayedLogs.map((log, i) => (
@@ -423,6 +621,27 @@ const LogsPage = () => {
                     currentFlag === 'fraud' && 'bg-destructive/10 hover:bg-destructive/20',
                   )}
                 >
+                  {isAdmin && (
+                    <td className="px-3 py-3 text-center align-middle">
+                      {(() => {
+                        const isSelectable = (effectiveStatus === 'unverified' || effectiveStatus === 'tampered') && !isLocked;
+                        return (
+                      <input
+                        type="checkbox"
+                        checked={selectedLogIds.has(log.id)}
+                        disabled={!isSelectable}
+                        onChange={(e) => toggleSelectLog(log.id, e.target.checked)}
+                        aria-label={`Select log ${log.id}`}
+                        title={
+                          isSelectable
+                            ? 'Select for bulk action'
+                            : 'Only unverified/tampered and not-yet-verified logs are selectable'
+                        }
+                      />
+                        );
+                      })()}
+                    </td>
+                  )}
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{log.id}</td>
                   <td className="px-4 py-3 font-mono text-xs text-foreground">{log.deviceId}</td>
                   <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{formatTimestamp(log.timestamp)}</td>
@@ -472,17 +691,23 @@ const LogsPage = () => {
                       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSelectedLog(log)}>
                         <Eye className="w-3.5 h-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
-                        <a
-                          href={`https://explorer.solana.com/tx/${log.txSignature}?cluster=devnet`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={`View transaction ${log.txSignature} in Solana Explorer`}
-                          title="Open in Solana Explorer"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      </Button>
+                      {log.txSignature && log.txSignature !== 'PENDING' ? (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
+                          <a
+                            href={`https://explorer.solana.com/tx/${log.txSignature}?cluster=devnet`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`View transaction ${log.txSignature} in Solana Explorer`}
+                            title="Open in Solana Explorer"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" disabled title={log.txSignature === 'PENDING' ? 'Transaction pending' : 'No transaction'}>
+                          <ExternalLink className="w-3.5 h-3.5 opacity-50" />
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </motion.tr>
